@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "nudge-ai"
 version = "0.1.0"
-description = "Nudge AI — intelligent personal productivity assistant (Phase 1)"
+description = "Nudge AI — intelligent personal productivity assistant"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     reminder_digest_threshold: float = 0.45
     reminder_daily_cap: int = 12
 
+    # LLM — OpenAI is the Phase 2 default; stub used when key unset or LLM_PROVIDER=stub
+    llm_provider: str = "openai"  # openai | stub | anthropic (stubbed)
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    anthropic_api_key: str = ""
+    llm_timeout_seconds: float = 45.0
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -50,6 +50,52 @@ export interface InAppNotification {
   created_at: string;
 }
 
+export interface TaskDraft {
+  title: string;
+  description: string | null;
+  priority: TaskPriority;
+  due_at: string | null;
+  explicit_remind_at: string | null;
+  needs_clarification: boolean;
+  clarification_question: string | null;
+}
+
+export interface ConfirmDraft {
+  title: string;
+  description: string | null;
+  priority: TaskPriority;
+  due_at: string | null;
+  explicit_remind_at: string | null;
+}
+
+export interface ExtractResponse {
+  proposal_id: string;
+  status: "pending" | "accepted" | "rejected";
+  source_text: string;
+  drafts: TaskDraft[];
+  notes: string | null;
+  llm_provider: string;
+  needs_clarification: boolean;
+  clarification_questions: string[];
+}
+
+export interface NlProposal {
+  id: string;
+  status: "pending" | "accepted" | "rejected";
+  source_text: string;
+  proposed_draft: Record<string, unknown>;
+  accepted_draft: Record<string, unknown> | null;
+  llm_provider: string;
+  created_task_ids: string[] | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface ConfirmResponse {
+  proposal: NlProposal;
+  tasks: Task[];
+}
+
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem("nudge_token");
   return {
@@ -134,4 +180,17 @@ export const api = {
     request<InAppNotification>(`/notifications/in-app/${id}/read`, { method: "POST" }),
   markAllRead: () =>
     request<{ updated: number }>("/notifications/in-app/read-all", { method: "POST" }),
+  extractTasks: (body: { text: string; timezone?: string }) =>
+    request<ExtractResponse>("/nl/extract", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getNlProposal: (id: string) => request<NlProposal>(`/nl/proposals/${id}`),
+  confirmNlProposal: (id: string, body: { drafts: ConfirmDraft[] }) =>
+    request<ConfirmResponse>(`/nl/proposals/${id}/confirm`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  rejectNlProposal: (id: string) =>
+    request<NlProposal>(`/nl/proposals/${id}/reject`, { method: "POST" }),
 };

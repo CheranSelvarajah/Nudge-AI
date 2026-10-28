@@ -72,6 +72,12 @@ class NotificationStatus(str, enum.Enum):
     skipped = "skipped"
 
 
+class NlProposalStatus(str, enum.Enum):
+    pending = "pending"
+    accepted = "accepted"
+    rejected = "rejected"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -223,3 +229,27 @@ class DailyNotifyCount(Base):
     )
     day: Mapped[date] = mapped_column(Date, nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class NlProposal(Base):
+    """Confirm-before-save NL extraction audit: proposed vs accepted drafts."""
+
+    __tablename__ = "nl_proposals"
+    __table_args__ = (Index("ix_nl_proposals_user_status", "user_id", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_draft: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    accepted_draft: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[NlProposalStatus] = mapped_column(
+        Enum(NlProposalStatus, name="nl_proposal_status"),
+        default=NlProposalStatus.pending,
+        nullable=False,
+    )
+    llm_provider: Mapped[str] = mapped_column(String(64), nullable=False, default="stub")
+    created_task_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
