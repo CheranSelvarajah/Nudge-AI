@@ -11,8 +11,8 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 
 const schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
+  email: z.string().email("Enter a valid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -20,15 +20,18 @@ type FormValues = z.infer<typeof schema>;
 export function LoginPage() {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
-  const form = useForm<FormValues>({ resolver: zodResolver(schema) });
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { email: "", password: "" },
+  });
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) => api.login(values.email, values.password),
     onSuccess: (data) => {
       localStorage.setItem("nudge_token", data.access_token);
-      navigate("/");
+      navigate("/", { replace: true });
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(err.message || "Sign in failed"),
   });
 
   return (
@@ -39,25 +42,48 @@ export function LoginPage() {
       </div>
       <form
         className="space-y-4 rounded-xl border border-border/80 bg-white/80 p-6 shadow-sm"
-        onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
+        onSubmit={form.handleSubmit(
+          (v) => {
+            setError(null);
+            mutation.mutate(v);
+          },
+          () => {
+            setError("Fix the highlighted fields, then try again.");
+          },
+        )}
       >
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" {...form.register("email")} />
+          <Input id="email" type="email" autoComplete="email" {...form.register("email")} />
+          {form.formState.errors.email && (
+            <p className="text-sm text-red-700">{form.formState.errors.email.message}</p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="password">Password</Label>
-          <Input id="password" type="password" {...form.register("password")} />
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            {...form.register("password")}
+          />
+          {form.formState.errors.password && (
+            <p className="text-sm text-red-700">{form.formState.errors.password.message}</p>
+          )}
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        )}
         <Button type="submit" className="w-full" disabled={mutation.isPending}>
           {mutation.isPending ? "Signing in…" : "Sign in"}
         </Button>
       </form>
       <p className="mt-4 text-center text-sm text-muted-foreground">
-        No account?{" "}
+        New here? Create an account first —{" "}
         <Link to="/register" className="font-medium text-primary underline-offset-4 hover:underline">
-          Create one
+          Create account
         </Link>
       </p>
     </div>

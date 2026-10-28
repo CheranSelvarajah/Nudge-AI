@@ -11,9 +11,9 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 
 const schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  timezone: z.string().min(1),
+  email: z.string().email("Enter a valid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  timezone: z.string().min(1, "Timezone is required"),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -23,41 +23,72 @@ export function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" },
+    defaultValues: {
+      email: "",
+      password: "",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    },
   });
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) => api.register(values.email, values.password, values.timezone),
+    mutationFn: (values: FormValues) =>
+      api.register(values.email, values.password, values.timezone),
     onSuccess: (data) => {
       localStorage.setItem("nudge_token", data.access_token);
-      navigate("/");
+      navigate("/", { replace: true });
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(err.message || "Registration failed"),
   });
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4">
       <div className="mb-8 text-center">
         <h1 className="font-display text-4xl font-semibold text-primary">Join Nudge AI</h1>
-        <p className="mt-2 text-muted-foreground">Email + password auth for Phase 1.</p>
+        <p className="mt-2 text-muted-foreground">Create an account with email + password.</p>
       </div>
       <form
         className="space-y-4 rounded-xl border border-border/80 bg-white/80 p-6 shadow-sm"
-        onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
+        onSubmit={form.handleSubmit(
+          (v) => {
+            setError(null);
+            mutation.mutate(v);
+          },
+          () => {
+            setError("Fix the highlighted fields, then try again.");
+          },
+        )}
       >
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" {...form.register("email")} />
+          <Input id="email" type="email" autoComplete="email" {...form.register("email")} />
+          {form.formState.errors.email && (
+            <p className="text-sm text-red-700">{form.formState.errors.email.message}</p>
+          )}
         </div>
         <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
-          <Input id="password" type="password" {...form.register("password")} />
+          <Label htmlFor="password">Password (min 8 characters)</Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            {...form.register("password")}
+          />
+          {form.formState.errors.password && (
+            <p className="text-sm text-red-700">{form.formState.errors.password.message}</p>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="timezone">Timezone</Label>
           <Input id="timezone" {...form.register("timezone")} />
+          {form.formState.errors.timezone && (
+            <p className="text-sm text-red-700">{form.formState.errors.timezone.message}</p>
+          )}
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </p>
+        )}
         <Button type="submit" className="w-full" disabled={mutation.isPending}>
           {mutation.isPending ? "Creating…" : "Create account"}
         </Button>

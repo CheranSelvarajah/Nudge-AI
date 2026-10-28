@@ -1,4 +1,5 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+// Prefer same-origin /api (Compose nginx proxy). Override with VITE_API_URL if needed.
+const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "");
 
 export type TaskStatus = "todo" | "in_progress" | "done" | "cancelled";
 export type TaskPriority = "p0" | "p1" | "p2" | "p3";
@@ -57,20 +58,47 @@ function authHeaders(): HeadersInit {
   };
 }
 
+function formatDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "msg" in item) {
+          const loc = Array.isArray((item as { loc?: unknown }).loc)
+            ? (item as { loc: unknown[] }).loc.join(".")
+            : "";
+          return loc ? `${loc}: ${(item as { msg: string }).msg}` : (item as { msg: string }).msg;
+        }
+        return JSON.stringify(item);
+      })
+      .join("; ");
+  }
+  if (detail && typeof detail === "object") return JSON.stringify(detail);
+  return "Request failed";
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: { ...authHeaders(), ...(init?.headers || {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ...(init?.headers || {}) },
+    });
+  } catch {
+    throw new Error(
+      `Cannot reach API at ${API_URL}. Is the api container running? (docker compose ps)`,
+    );
+  }
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail: unknown = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
+      detail = body.detail ?? body;
     } catch {
       /* ignore */
     }
-    throw new Error(typeof detail === "string" ? detail : "Request failed");
+    throw new Error(formatDetail(detail));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

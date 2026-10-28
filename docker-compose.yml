@@ -28,9 +28,8 @@ services:
   api:
     build:
       context: ./backend
+    # Use image entrypoint only (avoid Windows CRLF bind-mount breaking set -e)
     command: ["/bin/sh", "/app/entrypoint.sh"]
-    volumes:
-      - ./backend/entrypoint.sh:/app/entrypoint.sh:ro
     env_file:
       - .env
     environment:
@@ -38,9 +37,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
@@ -84,10 +89,13 @@ services:
   web:
     build:
       context: ./frontend
+      args:
+        VITE_API_URL: /api
     ports:
       - "5173:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

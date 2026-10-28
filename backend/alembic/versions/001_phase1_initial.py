@@ -17,8 +17,36 @@ down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+ENUMS = {
+    "task_status": ("todo", "in_progress", "done", "cancelled"),
+    "task_priority": ("p0", "p1", "p2", "p3"),
+    "task_source": ("manual", "nl"),
+    "decision_action": ("send", "skip", "digest", "defer"),
+    "notification_channel": ("email", "in_app"),
+    "notification_status": ("pending", "sent", "failed", "skipped"),
+}
+
+
+def _ensure_enums() -> dict[str, postgresql.ENUM]:
+    bind = op.get_bind()
+    created: dict[str, postgresql.ENUM] = {}
+    for name, values in ENUMS.items():
+        enum = postgresql.ENUM(*values, name=name, create_type=False)
+        # Idempotent create for partial/re-run local DBs
+        op.execute(
+            sa.text(
+                f"DO $$ BEGIN CREATE TYPE {name} AS ENUM ({', '.join(repr(v) for v in values)}); "
+                f"EXCEPTION WHEN duplicate_object THEN null; END $$;"
+            )
+        )
+        enum.create(bind, checkfirst=True)
+        created[name] = enum
+    return created
+
 
 def upgrade() -> None:
+    enums = _ensure_enums()
+
     op.create_table(
         "users",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -29,33 +57,22 @@ def upgrade() -> None:
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
 
-    task_status = sa.Enum("todo", "in_progress", "done", "cancelled", name="task_status")
-    task_priority = sa.Enum("p0", "p1", "p2", "p3", name="task_priority")
-    task_source = sa.Enum("manual", "nl", name="task_source")
-    decision_action = sa.Enum("send", "skip", "digest", "defer", name="decision_action")
-    notification_channel = sa.Enum("email", "in_app", name="notification_channel")
-    notification_status = sa.Enum(
-        "pending", "sent", "failed", "skipped", name="notification_status"
-    )
-
-    task_status.create(op.get_bind(), checkfirst=True)
-    task_priority.create(op.get_bind(), checkfirst=True)
-    task_source.create(op.get_bind(), checkfirst=True)
-    decision_action.create(op.get_bind(), checkfirst=True)
-    notification_channel.create(op.get_bind(), checkfirst=True)
-    notification_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "tasks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("status", task_status, nullable=False),
-        sa.Column("priority", task_priority, nullable=False),
+        sa.Column("status", enums["task_status"], nullable=False),
+        sa.Column("priority", enums["task_priority"], nullable=False),
         sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("source", task_source, nullable=False),
+        sa.Column("source", enums["task_source"], nullable=False),
         sa.Column("explicit_remind_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("force_within_quiet", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("last_notified_at", sa.DateTime(timezone=True), nullable=True),
@@ -68,7 +85,13 @@ def upgrade() -> None:
     op.create_table(
         "reminder_preferences",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+            unique=True,
+        ),
         sa.Column("quiet_start", sa.Time(), nullable=False),
         sa.Column("quiet_end", sa.Time(), nullable=False),
         sa.Column("channels", sa.JSON(), nullable=False),
@@ -82,12 +105,22 @@ def upgrade() -> None:
     op.create_table(
         "reminder_decisions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("task_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "task_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tasks.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("scored_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("score", sa.Float(), nullable=False),
         sa.Column("components", sa.JSON(), nullable=False),
-        sa.Column("action", decision_action, nullable=False),
+        sa.Column("action", enums["decision_action"], nullable=False),
         sa.Column("reason_text", sa.Text(), nullable=False),
         sa.Column("idempotency_key", sa.String(128), nullable=False),
         sa.Column("weights_version", sa.String(32), nullable=False, server_default="v1"),
@@ -98,23 +131,43 @@ def upgrade() -> None:
     op.create_table(
         "notifications",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("channel", notification_channel, nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("channel", enums["notification_channel"], nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
-        sa.Column("status", notification_status, nullable=False),
+        sa.Column("status", enums["notification_status"], nullable=False),
         sa.Column("provider_message_id", sa.String(255), nullable=True),
-        sa.Column("related_decision_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("reminder_decisions.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "related_decision_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("reminder_decisions.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
 
     op.create_table(
         "in_app_notifications",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("title", sa.String(500), nullable=False),
         sa.Column("body", sa.Text(), nullable=False),
         sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("related_decision_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("reminder_decisions.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "related_decision_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("reminder_decisions.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.create_index("ix_in_app_notifications_user_id", "in_app_notifications", ["user_id"])
@@ -122,7 +175,12 @@ def upgrade() -> None:
     op.create_table(
         "daily_notify_counts",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("day", sa.Date(), nullable=False),
         sa.Column("count", sa.Integer(), nullable=False, server_default="0"),
         sa.UniqueConstraint("user_id", "day", name="uq_daily_notify_user_day"),
@@ -141,9 +199,5 @@ def downgrade() -> None:
     op.drop_table("tasks")
     op.drop_index("ix_users_email", table_name="users")
     op.drop_table("users")
-    sa.Enum(name="notification_status").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="notification_channel").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="decision_action").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="task_source").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="task_priority").drop(op.get_bind(), checkfirst=True)
-    sa.Enum(name="task_status").drop(op.get_bind(), checkfirst=True)
+    for name in ENUMS:
+        op.execute(sa.text(f"DROP TYPE IF EXISTS {name}"))
