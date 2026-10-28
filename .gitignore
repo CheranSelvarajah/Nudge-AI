@@ -18,3 +18,7 @@ frontend/dist/
 coverage/
 htmlcov/
 .coverage
+
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
