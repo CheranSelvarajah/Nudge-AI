@@ -32,6 +32,13 @@ def resolve_timezone(user: User, db: Session, override: str | None) -> str:
 
 
 def _parse_datetime(value: Any, tz_name: str) -> datetime | None:
+    """Parse extraction datetimes as user wall-clock times (DST-safe).
+
+    OpenAI often emits the right clock face with a stale Eastern offset
+    (e.g. 14:00-04:00 on the Nov DST fall-back Sunday → shows as 1pm EST).
+    Non-UTC values are reinterpreted as Y-M-D H:M in the user's IANA zone.
+    UTC/Z instants are converted with astimezone (preserve absolute time).
+    """
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -42,13 +49,24 @@ def _parse_datetime(value: Any, tz_name: str) -> datetime | None:
             dt = datetime.fromisoformat(text)
         except ValueError:
             return None
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+
     if dt.tzinfo is None:
-        try:
-            tz = ZoneInfo(tz_name)
-        except Exception:
-            tz = ZoneInfo("UTC")
-        dt = dt.replace(tzinfo=tz)
-    return dt
+        return datetime(
+            dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, tzinfo=tz
+        )
+
+    offset = dt.utcoffset()
+    if offset is not None and offset.total_seconds() == 0:
+        return dt.astimezone(tz)
+
+    # Trust the wall-clock fields; attach ZoneInfo so DST offset is correct.
+    return datetime(
+        dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, tzinfo=tz
+    )
 
 
 def normalize_raw_extraction(raw: dict[str, Any], tz_name: str) -> ExtractionPayload:

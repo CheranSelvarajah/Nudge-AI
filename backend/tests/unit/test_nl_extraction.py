@@ -122,6 +122,11 @@ def test_stub_splits_controls_lab_and_french_test():
     assert payload.tasks[0].due_at.astimezone(ZoneInfo("America/Toronto")).hour == 14
     assert payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).hour == 23
     assert payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).minute == 59
+    # Nov 1 2026 is DST fall-back Sunday → afternoon is EST (UTC-5)
+    assert payload.tasks[0].due_at.utcoffset() == payload.tasks[0].due_at.astimezone(
+        ZoneInfo("America/Toronto")
+    ).utcoffset()
+    assert payload.tasks[0].due_at.utcoffset().total_seconds() == -5 * 3600
     # Same calendar day
     d0 = payload.tasks[0].due_at.astimezone(ZoneInfo("America/Toronto")).date()
     d1 = payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).date()
@@ -147,6 +152,37 @@ def test_stub_splits_controls_lab_and_french_test():
     )
     assert len(fixed["tasks"]) == 2
     assert "Split collapsed" in (fixed.get("notes") or "")
+
+
+def test_normalize_fixes_stale_edt_offset_on_nov_dst_sunday():
+    """14:00-04:00 on 2026-11-01 must become 14:00 EST (-05), not display as 1pm."""
+    raw = {
+        "tasks": [
+            {
+                "title": "Controls lab part a",
+                "priority": "p2",
+                "due_at": "2026-11-01T14:00:00-04:00",
+                "explicit_remind_at": None,
+            },
+            {
+                "title": "French test",
+                "priority": "p2",
+                "due_at": "2026-11-01T23:59:00-04:00",
+                "explicit_remind_at": None,
+            },
+        ],
+        "notes": None,
+    }
+    payload = normalize_raw_extraction(raw, "America/Toronto")
+    d0 = payload.tasks[0].due_at
+    d1 = payload.tasks[1].due_at
+    assert d0 is not None and d1 is not None
+    assert d0.hour == 14 and d0.utcoffset().total_seconds() == -5 * 3600
+    assert d1.hour == 23 and d1.minute == 59
+    assert d1.utcoffset().total_seconds() == -5 * 3600
+    # Must not be the 1pm/10:59 skew from trusting -04 on a post-fall-back day
+    assert d0.astimezone(ZoneInfo("America/Toronto")).hour == 14
+    assert d1.astimezone(ZoneInfo("America/Toronto")).hour == 23
 
 
 def test_normalize_salvages_missing_title():

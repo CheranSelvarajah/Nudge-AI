@@ -13,18 +13,62 @@ import {
   type TaskPriority,
 } from "@/lib/api";
 
-function toLocalInput(iso: string | null | undefined): string {
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/** Wall-clock parts of an instant in an IANA zone (DST-aware). */
+function wallParts(ms: number, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ms));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+  };
+}
+
+/** Show ISO due times as datetime-local wall clock in the extraction timezone. */
+function toLocalInput(iso: string | null | undefined, timeZone = browserTimeZone()): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
+  const w = wallParts(d.getTime(), timeZone);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${w.year}-${pad(w.month)}-${pad(w.day)}T${pad(w.hour)}:${pad(w.minute)}`;
 }
 
-function toIso(local: string): string | null {
+/** Interpret datetime-local as wall time in timeZone → UTC ISO. */
+function toIso(local: string, timeZone = browserTimeZone()): string | null {
   if (!local) return null;
-  const d = new Date(local);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const mo = Number(match[2]);
+  const day = Number(match[3]);
+  const hh = Number(match[4]);
+  const mm = Number(match[5]);
+  // Guess UTC then nudge until wall parts in timeZone match (handles DST).
+  let guess = Date.UTC(y, mo - 1, day, hh, mm, 0);
+  for (let i = 0; i < 4; i++) {
+    const w = wallParts(guess, timeZone);
+    const asUtc = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, 0);
+    const target = Date.UTC(y, mo - 1, day, hh, mm, 0);
+    const delta = target - asUtc;
+    if (delta === 0) break;
+    guess += delta;
+  }
+  return new Date(guess).toISOString();
 }
 
 function draftToEditable(d: TaskDraft): ConfirmDraft {
@@ -45,6 +89,7 @@ function errorMessage(err: unknown): string {
 
 export function NlTaskIntake() {
   const qc = useQueryClient();
+  const timeZone = browserTimeZone();
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<ExtractResponse | null>(null);
@@ -54,7 +99,7 @@ export function NlTaskIntake() {
     mutationFn: () =>
       api.extractTasks({
         text,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezone: timeZone,
       }),
     onSuccess: (data) => {
       if (!data?.drafts?.length) {
@@ -211,17 +256,21 @@ export function NlTaskIntake() {
                 <Label>Due</Label>
                 <Input
                   type="datetime-local"
-                  value={toLocalInput(draft.due_at)}
-                  onChange={(e) => updateEdit(index, { due_at: toIso(e.target.value) })}
+                  value={toLocalInput(draft.due_at, timeZone)}
+                  onChange={(e) =>
+                    updateEdit(index, { due_at: toIso(e.target.value, timeZone) })
+                  }
                 />
               </div>
               <div className="space-y-2 md:col-span-2">
                 <Label>Guaranteed remind at</Label>
                 <Input
                   type="datetime-local"
-                  value={toLocalInput(draft.explicit_remind_at)}
+                  value={toLocalInput(draft.explicit_remind_at, timeZone)}
                   onChange={(e) =>
-                    updateEdit(index, { explicit_remind_at: toIso(e.target.value) })
+                    updateEdit(index, {
+                      explicit_remind_at: toIso(e.target.value, timeZone),
+                    })
                   }
                 />
               </div>

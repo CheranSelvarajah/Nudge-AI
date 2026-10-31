@@ -46,6 +46,9 @@ Rules:
 - Resolve relative dates (tomorrow, Sunday, next Friday, in 3 days, 2pm, 11:59, same day)
   using the given timezone and "now". Apply dates per task; "same day" = calendar day of
   the other deadline in the sentence.
+- due_at MUST use the user's timezone offset for that calendar date (respect DST).
+  Example: America/Toronto on 2026-11-01 (after fall-back) is EST (UTC-5), so
+  "Sunday 2pm" → 2026-11-01T14:00:00-05:00 — NOT -04:00.
 - Use priority p0=critical/urgent, p1=high, p2=medium (default), p3=low.
 - If a single item's title/intent is critically ambiguous, set needs_clarification=true,
   ask one short question, and still provide a best-effort draft title.
@@ -277,6 +280,13 @@ def _parse_clock(text: str) -> tuple[int, int] | None:
     return None
 
 
+def _wall_in_zone(base: datetime, *, hour: int, minute: int, days: int = 0) -> datetime:
+    """Build a DST-safe local wall time in base's zone (or UTC)."""
+    tz = base.tzinfo or ZoneInfo("UTC")
+    day = (base.astimezone(tz) if base.tzinfo else base) + timedelta(days=days)
+    return datetime(day.year, day.month, day.day, hour, minute, 0, tzinfo=tz)
+
+
 def _stub_due(
     text: str,
     local_now: datetime,
@@ -289,47 +299,35 @@ def _stub_due(
     minute = clock[1] if clock else 0
 
     if "same day" in lower and anchor_day is not None:
-        return anchor_day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return _wall_in_zone(anchor_day, hour=hour, minute=minute)
 
     if "day after tomorrow" in lower:
-        return (local_now + timedelta(days=2)).replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
+        return _wall_in_zone(local_now, hour=hour, minute=minute, days=2)
     if "tomorrow" in lower:
-        return (local_now + timedelta(days=1)).replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
+        return _wall_in_zone(local_now, hour=hour, minute=minute, days=1)
     if "next week" in lower:
-        return (local_now + timedelta(days=7)).replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
+        return _wall_in_zone(local_now, hour=hour, minute=minute, days=7)
 
     for name, weekday in _WEEKDAYS.items():
         if re.search(rf"\b{name}\b", lower):
             days_ahead = (weekday - local_now.weekday()) % 7
-            candidate = (local_now + timedelta(days=days_ahead)).replace(
-                hour=hour, minute=minute, second=0, microsecond=0
-            )
-            # If that weekday/time already passed today, jump a week
+            candidate = _wall_in_zone(local_now, hour=hour, minute=minute, days=days_ahead)
             if days_ahead == 0 and candidate <= local_now:
-                candidate = candidate + timedelta(days=7)
+                candidate = _wall_in_zone(local_now, hour=hour, minute=minute, days=7)
             return candidate
 
     m = re.search(r"\bin\s+(\d+)\s+days?\b", lower)
     if m:
-        return (local_now + timedelta(days=int(m.group(1)))).replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
+        return _wall_in_zone(local_now, hour=hour, minute=minute, days=int(m.group(1)))
     m = re.search(r"\bin\s+(\d+)\s+hours?\b", lower)
     if m:
         return local_now + timedelta(hours=int(m.group(1)))
 
-    # Bare clock with "by" and no weekday — use today/anchor if still upcoming
     if clock and re.search(r"\bby\b", lower):
         base = anchor_day or local_now
-        candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        candidate = _wall_in_zone(base, hour=hour, minute=minute)
         if candidate < local_now and anchor_day is None:
-            candidate = candidate + timedelta(days=1)
+            candidate = _wall_in_zone(local_now, hour=hour, minute=minute, days=1)
         return candidate
     return None
 
