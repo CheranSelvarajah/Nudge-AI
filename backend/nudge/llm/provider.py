@@ -167,12 +167,14 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         return StubLLMProvider()
 
     if provider in ("openai", "openai-compatible"):
-        if settings.openai_api_key:
+        api_key = (settings.openai_api_key or "").strip()
+        if api_key:
             return OpenAILLMProvider(
-                api_key=settings.openai_api_key,
+                api_key=api_key,
                 model=settings.openai_model,
                 timeout_seconds=settings.llm_timeout_seconds,
             )
+        # Empty / whitespace key is expected for local Compose — stub, do not call OpenAI
         logger.warning("OPENAI_API_KEY unset; using stub LLM provider")
         return StubLLMProvider()
 

@@ -37,6 +37,12 @@ function draftToEditable(d: TaskDraft): ConfirmDraft {
   };
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  return "Extract failed. Check that you are logged in and the API is running.";
+}
+
 export function NlTaskIntake() {
   const qc = useQueryClient();
   const [text, setText] = useState("");
@@ -51,11 +57,19 @@ export function NlTaskIntake() {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }),
     onSuccess: (data) => {
+      if (!data?.drafts?.length) {
+        setExtraction(null);
+        setEdits([]);
+        setError(
+          "Extraction returned no drafts. With no OPENAI_API_KEY the stub should still return one — check API logs.",
+        );
+        return;
+      }
       setError(null);
       setExtraction(data);
       setEdits(data.drafts.map(draftToEditable));
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: unknown) => setError(errorMessage(err)),
   });
 
   const confirm = useMutation({
@@ -70,7 +84,7 @@ export function NlTaskIntake() {
       setText("");
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: unknown) => setError(errorMessage(err)),
   });
 
   const reject = useMutation({
@@ -83,7 +97,7 @@ export function NlTaskIntake() {
       setEdits([]);
       setError(null);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: unknown) => setError(errorMessage(err)),
   });
 
   function updateEdit(index: number, patch: Partial<ConfirmDraft>) {
@@ -98,7 +112,17 @@ export function NlTaskIntake() {
           Paste what you need to do. Review the draft, then confirm — nothing is saved until you
           approve.
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          No OpenAI key needed for local use: the API falls back to a deterministic stub when{" "}
+          <code className="rounded bg-muted px-1">OPENAI_API_KEY</code> is empty.
+        </p>
       </div>
+
+      {error && (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
 
       {!extraction ? (
         <div className="space-y-3">
@@ -113,18 +137,27 @@ export function NlTaskIntake() {
           <Button
             type="button"
             disabled={!text.trim() || extract.isPending}
-            onClick={() => extract.mutate()}
+            onClick={() => {
+              setError(null);
+              extract.mutate();
+            }}
           >
             {extract.isPending ? "Extracting…" : "Extract draft"}
           </Button>
+          {extract.isPending && (
+            <p className="text-xs text-muted-foreground">Calling /api/nl/extract…</p>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Proposal <span className="font-mono">{extraction.proposal_id.slice(0, 8)}</span> ·
-            provider {extraction.llm_provider}
-            {extraction.notes ? ` · ${extraction.notes}` : ""}
-          </p>
+          <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+            <p className="font-medium text-sm">Review draft before saving</p>
+            <p className="text-xs text-muted-foreground">
+              Proposal <span className="font-mono">{String(extraction.proposal_id).slice(0, 8)}</span> ·
+              provider <span className="font-medium">{extraction.llm_provider}</span>
+              {extraction.notes ? ` · ${extraction.notes}` : ""}
+            </p>
+          </div>
 
           {extraction.needs_clarification && extraction.clarification_questions.length > 0 && (
             <div className="rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
@@ -224,8 +257,6 @@ export function NlTaskIntake() {
           </div>
         </div>
       )}
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
     </section>
   );
 }
