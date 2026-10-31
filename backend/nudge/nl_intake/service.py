@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from nudge.auth.deps import ensure_preferences
 from nudge.core.config import get_settings
 from nudge.core.models import NlProposal, NlProposalStatus, TaskSource, User
-from nudge.llm.provider import LLMProvider, get_llm_provider
+from nudge.llm.provider import LLMProvider, expand_collapsed_extraction, get_llm_provider
 from nudge.nl_intake.schemas import (
     ConfirmRequest,
     ExtractionPayload,
@@ -95,6 +95,13 @@ def extract_and_store(
     clock = now or datetime.now(timezone.utc)
 
     raw = llm.extract_tasks(text, timezone=tz_name, now=clock)
+    # OpenAI sometimes collapses 2 deliverables into 1 — split from source heuristics
+    raw = expand_collapsed_extraction(
+        text.strip(),
+        raw,
+        timezone=tz_name,
+        now=clock,
+    )
     payload = normalize_raw_extraction(raw, tz_name)
 
     proposal = NlProposal(

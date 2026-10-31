@@ -97,8 +97,56 @@ def test_stub_splits_numbered_list_into_two_drafts():
 def test_extraction_prompt_requires_multi_task_split():
     from nudge.llm.provider import EXTRACTION_SYSTEM_PROMPT
 
-    assert "one tasks[] entry per distinct deliverable" in EXTRACTION_SYSTEM_PROMPT
-    assert "Do NOT collapse multiple deliverables" in EXTRACTION_SYSTEM_PROMPT
+    assert "Hard triggers" in EXTRACTION_SYSTEM_PROMPT
+    assert "and then" in EXTRACTION_SYSTEM_PROMPT
+    assert "controls lab" in EXTRACTION_SYSTEM_PROMPT
+
+
+def test_stub_splits_controls_lab_and_french_test():
+    """User repro: part a + and then + two deadlines → 2 drafts."""
+    from nudge.llm.provider import StubLLMProvider, expand_collapsed_extraction
+
+    provider = StubLLMProvider()
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)  # Thursday
+    text = (
+        "Finish part a of the controls lab by sunday 2pm and then "
+        "submit the French test by 11:59 same day"
+    )
+    raw = provider.extract_tasks(text, timezone="America/Toronto", now=now)
+    payload = normalize_raw_extraction(raw, "America/Toronto")
+    assert len(payload.tasks) == 2
+    assert "part a" in payload.tasks[0].title.lower() or "controls" in payload.tasks[0].title.lower()
+    assert "french" in payload.tasks[1].title.lower()
+    assert payload.tasks[0].due_at is not None
+    assert payload.tasks[1].due_at is not None
+    assert payload.tasks[0].due_at.astimezone(ZoneInfo("America/Toronto")).hour == 14
+    assert payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).hour == 23
+    assert payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).minute == 59
+    # Same calendar day
+    d0 = payload.tasks[0].due_at.astimezone(ZoneInfo("America/Toronto")).date()
+    d1 = payload.tasks[1].due_at.astimezone(ZoneInfo("America/Toronto")).date()
+    assert d0 == d1
+
+    # Post-process also repairs a collapsed OpenAI-style single draft
+    collapsed = {
+        "tasks": [
+            {
+                "title": "Finish lab and French test",
+                "description": text,
+                "priority": "p2",
+                "due_at": "2026-11-01T14:00:00-04:00",
+                "explicit_remind_at": None,
+                "needs_clarification": False,
+                "clarification_question": None,
+            }
+        ],
+        "notes": "You mentioned two things.",
+    }
+    fixed = expand_collapsed_extraction(
+        text, collapsed, timezone="America/Toronto", now=now
+    )
+    assert len(fixed["tasks"]) == 2
+    assert "Split collapsed" in (fixed.get("notes") or "")
 
 
 def test_normalize_salvages_missing_title():
