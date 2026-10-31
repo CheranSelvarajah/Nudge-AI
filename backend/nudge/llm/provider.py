@@ -29,11 +29,18 @@ Return ONLY valid JSON matching this schema (no markdown):
   "notes": "optional short note for the user or null"
 }
 Rules:
-- Prefer one task unless the user clearly lists multiple.
+- ALWAYS emit one tasks[] entry per distinct deliverable, due date, or numbered/part item
+  when the text clearly has 2+ separate work items (e.g. "lab part 1 … part 2 …",
+  "1) … 2) …", "X due Friday and Y due Monday", "do A and also B").
+- Do NOT collapse multiple deliverables into a single task with a notes/clarification
+  message like "you mentioned two things". Put each in tasks[].
+- Use one task only when the user describes a single work item (even if long).
 - Resolve relative dates (tomorrow, next Friday, in 3 days) using the given timezone and "now".
+  Apply dates/priorities per task when they differ; otherwise inherit shared context.
 - Use priority p0=critical/urgent, p1=high, p2=medium (default), p3=low.
-- If title/intent is critically ambiguous, set needs_clarification=true,
+- If a single item's title/intent is critically ambiguous, set needs_clarification=true,
   ask one short question, and still provide a best-effort draft title.
+  Never use needs_clarification merely because there are multiple clear tasks.
 - Never invent secrets or credentials. Do not write to any database.
 """
 
@@ -86,16 +93,26 @@ class StubLLMProvider(LLMProvider):
         tz = _safe_zone(timezone)
         local_now = now.astimezone(tz) if now.tzinfo else now.replace(tzinfo=tz)
 
-        priority = _stub_priority(cleaned)
-        due_at = _stub_due(cleaned, local_now)
-        remind_at = _stub_remind(cleaned, local_now)
-        title = _stub_title(cleaned)
-        needs = len(title) < 3
-        return {
-            "tasks": [
+        segments = _stub_task_segments(cleaned)
+        shared_priority = _stub_priority(cleaned)
+        tasks: list[dict[str, Any]] = []
+        for seg in segments:
+            priority = _stub_priority(seg) if _stub_priority(seg) != "p2" else shared_priority
+            # Prefer segment-local due/remind; fall back to whole-text cues for single segment
+            due_at = _stub_due(seg, local_now) or (
+                _stub_due(cleaned, local_now) if len(segments) == 1 else None
+            )
+            remind_at = _stub_remind(seg, local_now) or (
+                _stub_remind(cleaned, local_now) if len(segments) == 1 else None
+            )
+            title = _stub_title(seg)
+            needs = len(title) < 3
+            tasks.append(
                 {
                     "title": title or "Untitled task",
-                    "description": cleaned if cleaned.lower() != title.lower() else None,
+                    "description": cleaned if len(segments) > 1 else (
+                        cleaned if cleaned.lower() != title.lower() else None
+                    ),
                     "priority": priority,
                     "due_at": due_at.isoformat() if due_at else None,
                     "explicit_remind_at": remind_at.isoformat() if remind_at else None,
@@ -104,9 +121,11 @@ class StubLLMProvider(LLMProvider):
                         "What should the task title be?" if needs else None
                     ),
                 }
-            ],
-            "notes": "Parsed with stub provider (no live LLM key).",
-        }
+            )
+        note = "Parsed with stub provider (no live LLM key)."
+        if len(tasks) > 1:
+            note = f"{note} Split into {len(tasks)} drafts."
+        return {"tasks": tasks, "notes": note}
 
 
 class OpenAILLMProvider(LLMProvider):
@@ -235,6 +254,52 @@ def _stub_remind(text: str, local_now: datetime) -> datetime | None:
     if m:
         return local_now + timedelta(days=int(m.group(1)))
     return None
+
+
+def _stub_task_segments(text: str) -> list[str]:
+    """Split clearly multi-deliverable text into one segment per task (stub only)."""
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+
+    # Newline / semicolon list with bullets or numbers
+    pieces = [p.strip() for p in re.split(r"[\n;]+", cleaned) if p.strip()]
+    numbered = [
+        p for p in pieces if re.match(r"^(\d+[\.\)]|[-*•])\s+\S", p)
+    ]
+    if len(numbered) >= 2:
+        return [re.sub(r"^(\d+[\.\)]|[-*•])\s+", "", p).strip() for p in numbered]
+
+    # "part 1" … "part 2" (lab parts, assignment parts, etc.)
+    part_hits = list(re.finditer(r"(?i)\bpart\s+(\d+)\b", cleaned))
+    if len(part_hits) >= 2:
+        prefix = cleaned[: part_hits[0].start()].strip()
+        prefix = re.sub(r"(?i)\bpart\s+\d+\b.*", "", prefix).strip(" ,;-")
+        segments: list[str] = []
+        for i, match in enumerate(part_hits):
+            end = part_hits[i + 1].start() if i + 1 < len(part_hits) else len(cleaned)
+            chunk = cleaned[match.start() : end].strip()
+            # Drop trailing connector + word before the next "part N" ("and lab")
+            if i + 1 < len(part_hits):
+                chunk = re.sub(r"(,|\band)\s+\w+\s*$", "", chunk, flags=re.IGNORECASE).strip()
+            chunk = re.sub(r"^(,|and)\s+", "", chunk, flags=re.IGNORECASE).strip(" ,;")
+            if prefix and prefix.lower() not in chunk.lower()[: max(40, len(prefix) + 5)]:
+                chunk = f"{prefix} {chunk}".strip()
+            if chunk:
+                segments.append(chunk)
+        if len(segments) >= 2:
+            return segments
+
+    # Explicit "and also" / "then also"
+    also_parts = [
+        p.strip(" ,;")
+        for p in re.split(r"\s+and also\s+|\s+then also\s+", cleaned, flags=re.IGNORECASE)
+        if p.strip(" ,;")
+    ]
+    if len(also_parts) >= 2:
+        return also_parts
+
+    return [cleaned]
 
 
 def _stub_title(text: str) -> str:

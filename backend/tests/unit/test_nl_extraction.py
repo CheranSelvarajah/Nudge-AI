@@ -60,6 +60,47 @@ def test_stub_empty_asks_clarification():
     assert raw["tasks"][0]["needs_clarification"] is True
 
 
+def test_stub_splits_two_lab_parts_into_two_drafts():
+    """Fixture: distinct deliverables must each become a draft (not one + note)."""
+    provider = StubLLMProvider()
+    now = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
+    text = (
+        "Finish lab part 1 tomorrow high priority and lab part 2 next week"
+    )
+    raw = provider.extract_tasks(text, timezone="America/Toronto", now=now)
+    payload = normalize_raw_extraction(raw, "America/Toronto")
+    assert len(payload.tasks) == 2
+    titles = " ".join(t.title.lower() for t in payload.tasks)
+    assert "part 1" in titles
+    assert "part 2" in titles
+    assert all(not t.needs_clarification for t in payload.tasks)
+    # Per-segment dues when present in each chunk
+    assert payload.tasks[0].due_at is not None
+    assert payload.tasks[1].due_at is not None
+    assert payload.tasks[0].due_at.date() != payload.tasks[1].due_at.date()
+
+
+def test_stub_splits_numbered_list_into_two_drafts():
+    provider = StubLLMProvider()
+    now = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
+    raw = provider.extract_tasks(
+        "1. Submit proposal tomorrow\n2. Prepare slides next week",
+        timezone="UTC",
+        now=now,
+    )
+    payload = normalize_raw_extraction(raw, "UTC")
+    assert len(payload.tasks) == 2
+    assert "proposal" in payload.tasks[0].title.lower()
+    assert "slides" in payload.tasks[1].title.lower()
+
+
+def test_extraction_prompt_requires_multi_task_split():
+    from nudge.llm.provider import EXTRACTION_SYSTEM_PROMPT
+
+    assert "one tasks[] entry per distinct deliverable" in EXTRACTION_SYSTEM_PROMPT
+    assert "Do NOT collapse multiple deliverables" in EXTRACTION_SYSTEM_PROMPT
+
+
 def test_normalize_salvages_missing_title():
     raw = {
         "tasks": [
