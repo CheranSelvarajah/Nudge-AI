@@ -1,7 +1,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# Install from lockfile inside the image — never copy host node_modules (Windows .bin breaks BuildKit)
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 # Same-origin /api — nginx proxies to the api service in Compose
 ARG VITE_API_URL=/api

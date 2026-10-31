@@ -1,0 +1,17 @@
+**/node_modules
+**/node_modules/**
+**/.bin
+**/dist
+**/build
+**/coverage
+**/.vite
+**/*.tsbuildinfo
+.git
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+uploads
+backend/uploads
+.env
+*.log
