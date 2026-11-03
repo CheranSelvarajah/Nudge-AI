@@ -149,6 +149,11 @@ export function NlTaskIntake() {
     setEdits((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
+  const missingDueIndexes = edits
+    .map((d, i) => (!d.due_at ? i + 1 : null))
+    .filter((n): n is number => n !== null);
+  const hasMissingDue = missingDueIndexes.length > 0;
+
   return (
     <section className="space-y-4 rounded-xl border border-border/80 bg-white/80 p-5">
       <div>
@@ -216,6 +221,24 @@ export function NlTaskIntake() {
             </div>
           )}
 
+          {hasMissingDue && (
+            <div
+              role="status"
+              className="rounded-md border border-accent/50 bg-accent/10 px-3 py-2 text-sm"
+            >
+              <p className="font-medium">Due date missing</p>
+              <p className="mt-1 text-muted-foreground">
+                {missingDueIndexes.length === 1 && edits.length === 1
+                  ? "This draft has no due date. Add one in the Due field below, or confirm without a due date."
+                  : missingDueIndexes.length === edits.length
+                    ? "None of these drafts have a due date. Add due dates below, or confirm without them."
+                    : `Draft${missingDueIndexes.length > 1 ? "s" : ""} ${missingDueIndexes.join(", ")} ${
+                        missingDueIndexes.length > 1 ? "have" : "has"
+                      } no due date. Add a due date below, or confirm without one.`}
+              </p>
+            </div>
+          )}
+
           {edits.map((draft, index) => (
             <div
               key={index}
@@ -253,13 +276,21 @@ export function NlTaskIntake() {
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>Due</Label>
+                <Label htmlFor={`nl-due-${index}`}>
+                  Due
+                  {!draft.due_at && (
+                    <span className="ml-2 text-xs font-normal text-accent">No due date set</span>
+                  )}
+                </Label>
                 <Input
+                  id={`nl-due-${index}`}
                   type="datetime-local"
                   value={toLocalInput(draft.due_at, timeZone)}
                   onChange={(e) =>
                     updateEdit(index, { due_at: toIso(e.target.value, timeZone) })
                   }
+                  aria-invalid={!draft.due_at}
+                  className={!draft.due_at ? "border-accent/60" : undefined}
                 />
               </div>
               <div className="space-y-2 md:col-span-2">
