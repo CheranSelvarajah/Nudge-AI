@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from nudge.auth.deps import get_current_user
 from nudge.core.db import get_db
-from nudge.core.models import Task, TaskStatus, User
+from nudge.core.models import Task, TaskSource, TaskStatus, User
 from nudge.tasks.schemas import TaskCreate, TaskOut, TaskUpdate
+from nudge.tasks.service import apply_task_update, create_task_for_user, get_user_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -39,11 +40,7 @@ def create_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Task:
-    task = Task(user_id=user.id, **body.model_dump())
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    return task
+    return create_task_for_user(db, user, body, source=TaskSource.manual)
 
 
 @router.get("/{task_id}", response_model=TaskOut)
@@ -52,7 +49,7 @@ def get_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Task:
-    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user.id).first()
+    task = get_user_task(db, user.id, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -65,16 +62,11 @@ def update_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Task:
-    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user.id).first()
+    task = get_user_task(db, user.id, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     data = body.model_dump(exclude_unset=True)
-    if data.get("status") == TaskStatus.done and task.completed_at is None:
-        data["completed_at"] = datetime.now(timezone.utc)
-    if data.get("status") is not None and data["status"] != TaskStatus.done:
-        data["completed_at"] = None
-    for key, value in data.items():
-        setattr(task, key, value)
+    apply_task_update(task, data)
     db.commit()
     db.refresh(task)
     return task
@@ -86,7 +78,7 @@ def delete_task(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user.id).first()
+    task = get_user_task(db, user.id, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     db.delete(task)

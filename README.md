@@ -1,8 +1,8 @@
 # Nudge AI
 
-Intelligent personal productivity assistant — Phase 1 daily-usable core.
+Intelligent personal productivity assistant — Phase 1 core + Phase 2 NL task intake.
 
-Deterministic reminder engine (scoring, quiet hours, guaranteed `remind_at`, explainability + idempotency) with React UI, FastAPI, Postgres, Redis, and Celery.
+Deterministic reminder engine (scoring, quiet hours, guaranteed `remind_at`, explainability + idempotency) with React UI, FastAPI, Postgres, Redis, and Celery. Natural-language task intake uses an OpenAI-backed LLM provider (stub without a key) and **confirm-before-save**.
 
 ## Stack
 
@@ -48,8 +48,20 @@ Migrations run automatically on API container start via `backend/entrypoint.sh`.
 
 1. Open http://localhost:5173 → **Create account**
 2. **Tasks** → add a task with a near due date and/or **Guaranteed remind at**
-3. Trigger evaluation: `POST /api/reminders/evaluate` (authorized) from Swagger or wait for Celery beat
-4. Check **Notifications** for in-app nudges; email prints to the `api`/`worker` logs when `EMAIL_PROVIDER=console`
+3. Optional NL: paste text under **Natural language** → review editable draft → **Confirm & save** (nothing persists until confirm)
+4. Trigger evaluation: `POST /api/reminders/evaluate` (authorized) from Swagger or wait for Celery beat
+5. Check **Notifications** for in-app nudges; email prints to the `api`/`worker` logs when `EMAIL_PROVIDER=console`
+
+### Phase 2 LLM env
+
+| Variable | Purpose |
+|----------|---------|
+| `LLM_PROVIDER` | `openai` (default) or `stub` |
+| `OPENAI_API_KEY` | Required for live OpenAI extraction; leave empty to use deterministic stub |
+| `OPENAI_MODEL` | Default `gpt-4o-mini` |
+| `LLM_TIMEOUT_SECONDS` | HTTP timeout for provider calls |
+
+Set keys only in local `.env` (copied from `.env.example`). Never commit secrets.
 
 ## Local development (without full Compose)
 
@@ -90,8 +102,10 @@ cd frontend
 npm run build   # typecheck via tsc
 ```
 
-## Phase 1 scope
+## Scope
 
-In: auth, task CRUD, dashboard, preferences (quiet hours / channels / digest / tz), ReminderEngine, NotificationProvider (in-app + console email), Compose, Alembic, unit tests, GHA.
+**Phase 1:** auth, task CRUD, dashboard, preferences, ReminderEngine, NotificationProvider, Compose, Alembic, tests, GHA.
 
-Out: NL intake, LangGraph planning, RAG, Google Calendar, web push (later phases).
+**Phase 2:** NL extract (`POST /api/nl/extract`) → editable draft → confirm (`POST /api/nl/proposals/{id}/confirm`) creates tasks via task service with `source=nl`; `nl_proposals` audit of proposed vs accepted; OpenAI provider + stub.
+
+**Later:** LangGraph planning, RAG, Google Calendar, web push.

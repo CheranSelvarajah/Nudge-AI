@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from nudge.auth.router import router as auth_router
 from nudge.core.config import get_settings
 from nudge.core.logging import new_request_id, setup_logging
+from nudge.nl_intake.router import router as nl_intake_router
 from nudge.notifications.router import router as notifications_router
 from nudge.preferences.router import router as preferences_router
 from nudge.reminders.router import router as reminders_router
@@ -62,3 +63,4 @@ app.include_router(tasks_router, prefix=prefix)
 app.include_router(preferences_router, prefix=prefix)
 app.include_router(notifications_router, prefix=prefix)
 app.include_router(reminders_router, prefix=prefix)
+app.include_router(nl_intake_router, prefix=prefix)

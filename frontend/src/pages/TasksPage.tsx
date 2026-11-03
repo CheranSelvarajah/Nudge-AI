@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { NlTaskIntake } from "@/components/NlTaskIntake";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +71,8 @@ export function TasksPage() {
         <h1 className="font-display text-3xl font-semibold">Tasks</h1>
         <p className="text-muted-foreground">Create, filter, and update work items.</p>
       </div>
+
+      <NlTaskIntake />
 
       <form
         className="grid gap-4 rounded-xl border border-border/80 bg-white/80 p-5 md:grid-cols-2"
